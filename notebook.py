@@ -21,14 +21,12 @@ class CycloneDataset(Dataset):
         self._load_samples(years, max_samples)
         
     def _load_samples(self, years, max_samples):
-        """Load all valid samples from the dataset"""
         for year_folder in years:
             year_path = self.root_dir / year_folder
             if not year_path.exists():
                 print(f"Warning: Year folder {year_folder} not found at {year_path}")
                 continue
-            
-            # Handle nested folder structure (e.g., 2005_0/2005_0/)
+        
             nested_path = year_path / year_folder
             if nested_path.exists():
                 year_path = nested_path
@@ -81,7 +79,6 @@ class CycloneDataset(Dataset):
     def __getitem__(self, idx):
         sample_info = self.samples[idx]
         
-        # Load data and replace NaN with zeros
         current_gridsat = np.load(sample_info['current_gridsat']).astype(np.float32)
         current_gridsat = np.nan_to_num(current_gridsat, nan=0.0)
         
@@ -91,7 +88,6 @@ class CycloneDataset(Dataset):
         next_gridsat = np.load(sample_info['next_gridsat']).astype(np.float32)
         next_gridsat = np.nan_to_num(next_gridsat, nan=0.0)
         
-        # Ensure correct dimensions
         if current_gridsat.ndim == 2:
             current_gridsat = current_gridsat[np.newaxis, ...]  # Add channel dim
         if current_era5.ndim == 2:
@@ -99,7 +95,6 @@ class CycloneDataset(Dataset):
         if next_gridsat.ndim == 2:
             next_gridsat = next_gridsat[np.newaxis, ...]
         
-        # Convert to tensors
         current_gridsat = torch.from_numpy(current_gridsat)
         current_era5 = torch.from_numpy(current_era5)
         next_gridsat = torch.from_numpy(next_gridsat)
@@ -128,7 +123,6 @@ class CycloneDataset(Dataset):
             align_corners=False
         ).squeeze(0)
         
-        # Normalize to [-1, 1]
         eps = 1e-8
         
         # GRIDSAT normalization
@@ -233,27 +227,18 @@ class MetricsCalculator:
     
     @staticmethod
     def mae(pred, target):
-        """Mean Absolute Error"""
         return torch.mean(torch.abs(pred - target)).item()
     
     @staticmethod
     def mse(pred, target):
-        """Mean Squared Error"""
         return F.mse_loss(pred, target).item()
     
     @staticmethod
     def rmse(pred, target):
-        """Root Mean Squared Error"""
         return torch.sqrt(F.mse_loss(pred, target)).item()
     
     @staticmethod
     def psnr(pred, target, max_val=2.0):
-        """Peak Signal-to-Noise Ratio
-        Args:
-            pred: Predicted images (B, C, H, W)
-            target: Target images (B, C, H, W)
-            max_val: Maximum possible value (2.0 for [-1, 1] range)
-        """
         mse = F.mse_loss(pred, target)
         if mse == 0:
             return 100.0
@@ -262,19 +247,14 @@ class MetricsCalculator:
     
     @staticmethod
     def ssim(pred, target, window_size=11, size_average=True):
-        """Structural Similarity Index
-        Simplified SSIM implementation
-        """
         C1 = 0.01 ** 2
         C2 = 0.03 ** 2
         
-        # Create Gaussian window
         sigma = 1.5
         gauss = torch.Tensor([np.exp(-(x - window_size//2)**2 / (2 * sigma**2)) 
                              for x in range(window_size)])
         gauss = gauss / gauss.sum()
         
-        # Create 2D window
         window = gauss.unsqueeze(1) @ gauss.unsqueeze(0)
         window = window.unsqueeze(0).unsqueeze(0)
         window = window.to(pred.device)
@@ -283,7 +263,6 @@ class MetricsCalculator:
         channel = pred.size(1)
         window = window.expand(channel, 1, window_size, window_size).contiguous()
         
-        # Calculate means
         mu1 = F.conv2d(pred, window, padding=window_size//2, groups=channel)
         mu2 = F.conv2d(target, window, padding=window_size//2, groups=channel)
         
@@ -307,7 +286,6 @@ class MetricsCalculator:
 
 
 class FIDCalculator:
-    """Calculate Fréchet Inception Distance"""
     def __init__(self, device='cuda'):
         self.device = device
         # Load pretrained Inception v3
@@ -317,12 +295,6 @@ class FIDCalculator:
         self.inception.to(device)
     
     def get_features(self, images):
-        """Extract features from Inception v3
-        Args:
-            images: (B, 1, H, W) in [-1, 1] range
-        Returns:
-            Features: (B, 2048)
-        """
         # Convert grayscale to RGB
         if images.size(1) == 1:
             images = images.repeat(1, 3, 1, 1)
@@ -339,14 +311,6 @@ class FIDCalculator:
         return features.cpu().numpy()
     
     def calculate_fid(self, real_features, fake_features):
-        """Calculate FID score
-        Args:
-            real_features: Features from real images (N, 2048)
-            fake_features: Features from generated images (N, 2048)
-        Returns:
-            FID score
-        """
-        # Calculate mean and covariance
         mu1 = np.mean(real_features, axis=0)
         sigma1 = np.cov(real_features, rowvar=False)
         
@@ -366,17 +330,6 @@ class FIDCalculator:
 
 
 def evaluate_model(model, dataloader, scheduler, device, condition_encoder, num_samples=100):
-    """Evaluate model on validation set
-    Args:
-        model: Trained diffusion model
-        dataloader: Validation dataloader
-        scheduler: Noise scheduler
-        device: Device to run on
-        condition_encoder: Condition encoder module
-        num_samples: Number of samples to evaluate
-    Returns:
-        Dictionary of metrics
-    """
     model.eval()
     condition_encoder.eval()
     
@@ -433,10 +386,8 @@ def evaluate_model(model, dataloader, scheduler, device, condition_encoder, num_
             all_real.append(target)
             all_fake.append(generated)
     
-    # Average metrics
     avg_metrics = {k: np.mean(v) for k, v in metrics.items()}
     
-    # Calculate FID if enough samples
     if len(all_real) > 0:
         all_real = torch.cat(all_real, dim=0)
         all_fake = torch.cat(all_fake, dim=0)
@@ -456,16 +407,6 @@ def evaluate_model(model, dataloader, scheduler, device, condition_encoder, num_
 
 def save_comparison_images(model, dataloader, scheduler, condition_encoder, 
                           device, save_dir, num_samples=8):
-    """Generate and save side-by-side comparison images
-    Args:
-        model: Trained model
-        dataloader: Dataloader
-        scheduler: Noise scheduler
-        condition_encoder: Condition encoder
-        device: Device
-        save_dir: Directory to save images
-        num_samples: Number of samples to save
-    """
     model.eval()
     condition_encoder.eval()
     save_dir = Path(save_dir)
@@ -494,16 +435,14 @@ def save_comparison_images(model, dataloader, scheduler, condition_encoder,
             noise_pred = model(generated, encoded_cond, t_batch)
             generated, _ = scheduler.sample_prev_timestep(generated, noise_pred, t)
         
-        # Move to CPU and convert to numpy
         gridsat_np = gridsat.cpu().numpy()
         target_np = target.cpu().numpy()
         generated_np = generated.cpu().numpy()
         
-        # Create comparison figure
+
         fig, axes = plt.subplots(num_samples, 3, figsize=(12, 4 * num_samples))
         
         for i in range(num_samples):
-            # Input (GridSat at time t)
             axes[i, 0].imshow(gridsat_np[i, 0], cmap='gray', vmin=-1, vmax=1)
             axes[i, 0].set_title(f'Input t\n{storm_names[i]}\n{timestamps[i]}')
             axes[i, 0].axis('off')
@@ -526,12 +465,7 @@ def save_comparison_images(model, dataloader, scheduler, condition_encoder,
 
 
 def plot_training_curves(train_losses, val_losses, save_path):
-    """Plot training and validation loss curves
-    Args:
-        train_losses: List of training losses
-        val_losses: List of validation losses
-        save_path: Path to save the plot
-    """
+
     plt.figure(figsize=(10, 6))
     
     plt.plot(train_losses, label='Training Loss', alpha=0.7)
@@ -555,7 +489,6 @@ import numpy as np
 from datetime import datetime
 
 class SpatialPositionalEncoding(nn.Module):
-    """2D Positional encoding for image patches"""
     def __init__(self, channels, height, width):
         super().__init__()
         self.channels = channels
@@ -567,7 +500,6 @@ class SpatialPositionalEncoding(nn.Module):
         self.register_buffer('pos_encoding', pos_encoding)
     
     def _get_2d_positional_encoding(self, h, w, d_model):
-        """Generate 2D sinusoidal positional encoding"""
         pe = torch.zeros(d_model, h, w)
         
         # Create position indices
@@ -589,17 +521,10 @@ class SpatialPositionalEncoding(nn.Module):
         return pe
     
     def forward(self, x):
-        """Add positional encoding to input
-        Args:
-            x: (B, C, H, W)
-        Returns:
-            x with positional encoding added: (B, C, H, W)
-        """
         return x + self.pos_encoding.unsqueeze(0)
 
 
 class TemporalEncoding(nn.Module):
-    """Encode timestamp information"""
     def __init__(self, embed_dim=128):
         super().__init__()
         self.embed_dim = embed_dim
@@ -631,12 +556,6 @@ class TemporalEncoding(nn.Module):
         )
     
     def forward(self, timestamps):
-        """Encode timestamps
-        Args:
-            timestamps: List of timestamp strings or tensor of indices (B, 4)
-        Returns:
-            Temporal embeddings: (B, embed_dim)
-        """
         if isinstance(timestamps, (list, tuple)) and isinstance(timestamps[0], str):
             # Parse string timestamps
             batch_size = len(timestamps)
@@ -654,13 +573,12 @@ class TemporalEncoding(nn.Module):
             days = torch.tensor(days, dtype=torch.long)
             hours = torch.tensor(hours, dtype=torch.long)
         else:
-            # Already tensor of indices
             years = timestamps[:, 0].long()
             months = timestamps[:, 1].long()
             days = timestamps[:, 2].long()
             hours = timestamps[:, 3].long()
         
-        # Move to same device as embeddings
+
         device = self.year_embed.weight.device
         years = years.to(device)
         months = months.to(device)
@@ -695,12 +613,6 @@ class StormEncoding(nn.Module):
         return self.storm_name_to_idx[storm_name]
     
     def forward(self, storm_names):
-        """Encode storm names
-        Args:
-            storm_names: List of storm name strings or tensor of indices (B,)
-        Returns:
-            Storm embeddings: (B, embed_dim)
-        """
         if isinstance(storm_names, (list, tuple)) and isinstance(storm_names[0], str):
             # Convert names to indices
             indices = [self.get_storm_idx(name) for name in storm_names]
@@ -716,7 +628,6 @@ class StormEncoding(nn.Module):
 
 
 class ConditionEncoder(nn.Module):
-    """Complete condition encoder combining spatial, temporal, and storm information"""
     def __init__(self, 
                  gridsat_channels=1,
                  era5_channels=4,
@@ -760,17 +671,6 @@ class ConditionEncoder(nn.Module):
         )
         
     def forward(self, gridsat, era5, timestamps, storm_names):
-        """
-        Args:
-            gridsat: (B, 1, H, W) - Satellite IR imagery
-            era5: (B, 4, H, W) - ERA5 atmospheric data
-            timestamps: List of timestamp strings or tensor (B, 4)
-            storm_names: List of storm names or tensor (B,)
-        
-        Returns:
-            encoded_condition: (B, output_channels, H, W)
-            context_embedding: (B, embed_dim) - for cross-attention
-        """
         batch_size = gridsat.shape[0]
         img_size = gridsat.shape[-1]
         
@@ -1103,18 +1003,6 @@ class ConditionalUNet(nn.Module):
         )
     
     def forward(self, noisy_target, gridsat, era5, timestamps, storm_names, t):
-        """
-        Args:
-            noisy_target: (B, 1, H, W) - Noisy target image at timestep t
-            gridsat: (B, 1, H, W) - Current GRIDSAT satellite imagery
-            era5: (B, 4, H, W) - Current ERA5 atmospheric data
-            timestamps: List of timestamp strings
-            storm_names: List of storm name strings
-            t: (B,) - Diffusion timestep
-        
-        Returns:
-            Predicted noise: (B, 1, H, W)
-        """
         # Encode conditions (ERA5, GRIDSAT, timestamps, storm names)
         encoded_condition, context_emb = self.condition_encoder(gridsat, era5, timestamps, storm_names)
         
@@ -1152,21 +1040,11 @@ class ConditionalUNet(nn.Module):
         
         return x
 ######## loss functions#######
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
-
 
 class DiffusionLoss(nn.Module):
     """Loss function for diffusion model training"""
     
     def __init__(self, loss_type='mse', use_l1=False, l1_weight=0.1):
-        """
-        Args:
-            loss_type: Type of loss ('mse', 'l1', 'smooth_l1', 'huber')
-            use_l1: If True and loss_type='mse', add L1 regularization
-            l1_weight: Weight for L1 loss component
-        """
         super().__init__()
         self.loss_type = loss_type
         self.use_l1 = use_l1
@@ -1184,17 +1062,6 @@ class DiffusionLoss(nn.Module):
             raise ValueError(f"Unknown loss type: {loss_type}. Choose from ['mse', 'l1', 'smooth_l1', 'huber']")
     
     def forward(self, pred_noise, true_noise):
-        """
-        Calculate diffusion loss
-        
-        Args:
-            pred_noise: Predicted noise from model (B, C, H, W)
-            true_noise: Ground truth noise (B, C, H, W)
-        
-        Returns:
-            Total loss (scalar)
-        """
-        # Base loss (MSE, L1, etc.)
         loss = self.base_loss(pred_noise, true_noise)
         
         # Optional additional L1 loss for MSE training (helps with sharper predictions)
@@ -1206,17 +1073,9 @@ class DiffusionLoss(nn.Module):
 
 
 class PerceptualLoss(nn.Module):
-    """
-    Simple perceptual loss using feature matching
-    Helps preserve structural information in generated images
-    """
     
     def __init__(self, feature_layers=[64, 128], in_channels=1):
-        """
-        Args:
-            feature_layers: List of feature dimensions for each layer
-            in_channels: Number of input channels
-        """
+        
         super().__init__()
         
         self.feature_extractors = nn.ModuleList()
@@ -1235,16 +1094,6 @@ class PerceptualLoss(nn.Module):
             prev_channels = features
     
     def forward(self, pred, target):
-        """
-        Calculate perceptual loss
-        
-        Args:
-            pred: Predicted images (B, C, H, W)
-            target: Target images (B, C, H, W)
-        
-        Returns:
-            Perceptual loss (scalar)
-        """
         loss = 0
         pred_feat = pred
         target_feat = target
@@ -1258,17 +1107,8 @@ class PerceptualLoss(nn.Module):
 
 
 class SSIMLoss(nn.Module):
-    """
-    Structural Similarity Index (SSIM) Loss
-    Measures perceptual similarity between images
-    """
     
     def __init__(self, window_size=11, size_average=True):
-        """
-        Args:
-            window_size: Size of Gaussian window
-            size_average: If True, average over batch
-        """
         super().__init__()
         self.window_size = window_size
         self.size_average = size_average
@@ -1276,7 +1116,6 @@ class SSIMLoss(nn.Module):
         self.window = self._create_window(window_size, self.channel)
     
     def _create_window(self, window_size, channel):
-        """Create Gaussian window for SSIM calculation"""
         def gaussian(window_size, sigma):
             gauss = torch.Tensor([
                 torch.exp(torch.tensor(-(x - window_size//2)**2 / float(2*sigma**2)))
@@ -1290,16 +1129,6 @@ class SSIMLoss(nn.Module):
         return window
     
     def forward(self, pred, target):
-        """
-        Calculate SSIM loss (1 - SSIM)
-        
-        Args:
-            pred: Predicted images (B, C, H, W)
-            target: Target images (B, C, H, W)
-        
-        Returns:
-            SSIM loss (scalar)
-        """
         C1 = 0.01 ** 2
         C2 = 0.03 ** 2
         
@@ -1333,12 +1162,6 @@ class SSIMLoss(nn.Module):
 
 
 class CombinedDiffusionLoss(nn.Module):
-    """
-    Combined loss with multiple components:
-    - Diffusion loss (MSE/L1 on noise prediction)
-    - Optional perceptual loss
-    - Optional SSIM loss
-    """
     
     def __init__(self, 
                  loss_type='mse',
@@ -1346,14 +1169,6 @@ class CombinedDiffusionLoss(nn.Module):
                  perceptual_weight=0.1,
                  use_ssim=False,
                  ssim_weight=0.1):
-        """
-        Args:
-            loss_type: Base diffusion loss type
-            use_perceptual: Whether to use perceptual loss
-            perceptual_weight: Weight for perceptual loss
-            use_ssim: Whether to use SSIM loss
-            ssim_weight: Weight for SSIM loss
-        """
         super().__init__()
         
         self.diffusion_loss = DiffusionLoss(loss_type=loss_type)
@@ -1369,19 +1184,7 @@ class CombinedDiffusionLoss(nn.Module):
             self.ssim_loss = SSIMLoss()
     
     def forward(self, pred_noise, true_noise, pred_x0=None, target_x0=None):
-        """
-        Calculate combined loss
         
-        Args:
-            pred_noise: Predicted noise (B, C, H, W)
-            true_noise: Ground truth noise (B, C, H, W)
-            pred_x0: Predicted clean image (optional, for perceptual/SSIM loss)
-            target_x0: Target clean image (optional, for perceptual/SSIM loss)
-        
-        Returns:
-            Total loss (scalar), dict of individual losses
-        """
-        # Base diffusion loss
         diff_loss = self.diffusion_loss(pred_noise, true_noise)
         total_loss = diff_loss
         
@@ -1405,18 +1208,8 @@ class CombinedDiffusionLoss(nn.Module):
 
 
 class WeightedDiffusionLoss(nn.Module):
-    """
-    Diffusion loss with timestep-dependent weighting
-    Gives more weight to important timesteps
-    """
     
     def __init__(self, loss_type='mse', weight_schedule='constant', num_timesteps=1000):
-        """
-        Args:
-            loss_type: Base loss type
-            weight_schedule: 'constant', 'snr', or 'truncated_snr'
-            num_timesteps: Number of diffusion timesteps
-        """
         super().__init__()
         self.loss_type = loss_type
         self.weight_schedule = weight_schedule
@@ -1457,17 +1250,6 @@ class WeightedDiffusionLoss(nn.Module):
         return weights
     
     def forward(self, pred_noise, true_noise, timesteps):
-        """
-        Calculate weighted diffusion loss
-        
-        Args:
-            pred_noise: Predicted noise (B, C, H, W)
-            true_noise: Ground truth noise (B, C, H, W)
-            timesteps: Timesteps for each sample (B,)
-        
-        Returns:
-            Weighted loss (scalar)
-        """
         # Calculate base loss (per sample)
         loss = self.base_loss(pred_noise, true_noise)
         loss = loss.mean(dim=[1, 2, 3])  # Average over channels and spatial dims
@@ -1482,23 +1264,6 @@ class WeightedDiffusionLoss(nn.Module):
 
 # Factory function for easy loss creation
 def get_loss_function(config):
-    """
-    Factory function to create loss function from config
-    
-    Args:
-        config: Dictionary with loss configuration
-            - loss_type: 'mse', 'l1', 'smooth_l1', 'huber'
-            - use_combined: Whether to use combined loss
-            - use_perceptual: Whether to add perceptual loss
-            - perceptual_weight: Weight for perceptual loss
-            - use_ssim: Whether to add SSIM loss
-            - ssim_weight: Weight for SSIM loss
-            - use_weighted: Whether to use weighted loss
-            - weight_schedule: 'constant', 'snr', 'truncated_snr'
-    
-    Returns:
-        Loss function module
-    """
     loss_type = config.get('loss_type', 'mse')
     
     if config.get('use_weighted', False):
