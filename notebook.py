@@ -510,13 +510,19 @@ class SpatialPositionalEncoding(nn.Module):
         div_term = torch.exp(torch.arange(0, d_model, 2).float() * 
                             -(np.log(10000.0) / d_model))
         
-        # Apply sin to even indices in the depth
-        pe[0::4, :, :] = torch.sin(y_pos * div_term[0::2].unsqueeze(-1).unsqueeze(-1))
-        pe[1::4, :, :] = torch.cos(y_pos * div_term[0::2].unsqueeze(-1).unsqueeze(-1))
+        # Apply positional encoding to all channels
+        for i in range(0, d_model, 2):
+            if i < d_model:
+                pe[i, :, :] = torch.sin(y_pos * div_term[i//2].unsqueeze(-1).unsqueeze(-1))
+            if i + 1 < d_model:
+                pe[i + 1, :, :] = torch.cos(y_pos * div_term[i//2].unsqueeze(-1).unsqueeze(-1))
         
-        # Apply sin to odd indices in the depth  
-        pe[2::4, :, :] = torch.sin(x_pos * div_term[1::2].unsqueeze(-1).unsqueeze(-1))
-        pe[3::4, :, :] = torch.cos(x_pos * div_term[1::2].unsqueeze(-1).unsqueeze(-1))
+        # Add x-positional encoding for remaining channels
+        for i in range(0, d_model, 2):
+            if i < d_model:
+                pe[i, :, :] += torch.sin(x_pos * div_term[i//2].unsqueeze(-1).unsqueeze(-1))
+            if i + 1 < d_model:
+                pe[i + 1, :, :] += torch.cos(x_pos * div_term[i//2].unsqueeze(-1).unsqueeze(-1))
         
         return pe
     
@@ -630,7 +636,7 @@ class StormEncoding(nn.Module):
 class ConditionEncoder(nn.Module):
     def __init__(self, 
                  gridsat_channels=1,
-                 era5_channels=4,
+                 era5_channels=69,
                  img_size=64,
                  embed_dim=128,
                  output_channels=64):
@@ -1316,8 +1322,8 @@ class Trainer:
         
         # Initialize models
         self.condition_encoder = ConditionEncoder(
-            gridsat_channels=1,
-            era5_channels=4,
+            gridsat_channels=config['gridsat_channels'],
+            era5_channels=config['era5_channels'],
             img_size=config['img_size'],
             embed_dim=config['embed_dim'],
             output_channels=config['condition_channels']
@@ -1330,10 +1336,10 @@ class Trainer:
         channel_mults=config['channel_mults'],
         t_emb_dim=config['t_emb_dim'],
         num_heads=config['num_heads'],
-        gridsat_channels=1,  # Add this
-        era5_channels=4,     # Add this
-        img_size=config['img_size'],  # Add this
-        condition_embed_dim=config['embed_dim']  # Replace context_dim with this
+        gridsat_channels=config['gridsat_channels'],
+        era5_channels=config['era5_channels'],
+        img_size=config['img_size'],
+        condition_embed_dim=config['embed_dim']
         ).to(self.device)
         
         # Noise scheduler
@@ -1622,6 +1628,8 @@ def main():
         'embed_dim': 128,
         'condition_channels': 64,
         't_emb_dim': 128,
+        'gridsat_channels': 1,
+        'era5_channels': 69,  # Updated to match actual data
         
         # Diffusion
         'num_timesteps': 1000,
